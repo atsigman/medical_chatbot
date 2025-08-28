@@ -32,18 +32,16 @@ pipeline {
                     | docker login --username AWS --password-stdin ${ecrUrl}
 
                # Ensure the ECR repository exists
-                            aws ecr describe-repositories --repository-names ${ECR_REPO} --region ${AWS_REGION} \
-                                || aws ecr create-repository --repository-name ${ECR_REPO} --region ${AWS_REGION}
+                aws ecr describe-repositories --repository-names ${ECR_REPO} --region ${AWS_REGION} \
+                || aws ecr create-repository --repository-name ${ECR_REPO} --region ${AWS_REGION}
 
-                            # Enable BuildKit (required for buildx multi-arch)
-                            export DOCKER_BUILDKIT=1
+                # Enable BuildKit (required for buildx multi-arch)
+                export DOCKER_BUILDKIT=1
+                export DOCKER_DEFAULT_PLATFORM=linux/amd64
 
-                            # Build and push multi-architecture image (amd64 + arm64)
-                            docker buildx build \
-                                --platform linux/amd64,linux/arm64 \
-                                -t ${imageFullTag} \
-                                --push \
-                                .
+                # Build image (amd64) and push
+                docker build -t ${imageFullTag} .
+                docker push ${imageFullTag}
 
                 # Scan the image with Trivy (use ECR fully qualified tag)
                 trivy image --severity HIGH,CRITICAL --format json -o trivy-report.json ${imageFullTag}
