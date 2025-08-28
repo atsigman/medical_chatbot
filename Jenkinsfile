@@ -31,18 +31,19 @@ pipeline {
                 aws ecr get-login-password --region ${AWS_REGION} \
                     | docker login --username AWS --password-stdin ${ecrUrl}
 
-                # Create buildx builder if not exists
-                docker buildx create --name multiarch-builder --driver docker-container || true
-                docker buildx use multiarch-builder
-                docker buildx inspect --bootstrap
-              
+               # Ensure the ECR repository exists
+                            aws ecr describe-repositories --repository-names ${ECR_REPO} --region ${AWS_REGION} \
+                                || aws ecr create-repository --repository-name ${ECR_REPO} --region ${AWS_REGION}
 
-                # Build multi-arch image (amd64 for App Runner, arm64 for local/dev)
-                docker buildx build \
-                    --platform linux/amd64,linux/arm64 \
-                    -t ${env.ECR_REPO}:${IMAGE_TAG} \
-                    --push \
-                    .
+                            # Enable BuildKit (required for buildx multi-arch)
+                            export DOCKER_BUILDKIT=1
+
+                            # Build and push multi-architecture image (amd64 + arm64)
+                            docker buildx build \
+                                --platform linux/amd64,linux/arm64 \
+                                -t ${imageFullTag} \
+                                --push \
+                                .
 
                 # Scan the image with Trivy (use ECR fully qualified tag)
                 trivy image --severity HIGH,CRITICAL --format json -o trivy-report.json ${imageFullTag}
