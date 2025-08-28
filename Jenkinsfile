@@ -18,39 +18,36 @@ pipeline {
             }
         }
 
-        stage('Authenticate with ECR') {
-            steps {
+       stage('Build, Scan, and Push Docker Image to ECR') {
+           steps {
+        withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-token']]) {
+            script {
+                def accountId = sh(script: "aws sts get-caller-identity --query Account --output text", returnStdout: true).trim()
+                def ecrUrl = "${accountId}.dkr.ecr.${env.AWS_REGION}.amazonaws.com/${env.ECR_REPO}"
+                def imageFullTag = "${ecrUrl}:${IMAGE_TAG}"
+
                 sh """
-                    aws ecr get-login-password --region ${AWS_REGION} \
-                    | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+                # Authenticate with ECR
+                aws ecr get-login-password --region ${AWS_REGION} \
+                    | docker login --username AWS --password-stdin ${ecrUrl}
+
+                # Create buildx builder if not exists
+                docker buildx create --use --name multiarch-builder || docker buildx use multiarch-builder
+
+                # Build multi-arch image (amd64 for App Runner, arm64 for local/dev)
+                docker buildx build \
+                    --platform linux/amd64,linux/arm64 \
+                    -t ${env.ECR_REPO}:${IMAGE_TAG} \
+                    --push \
+                    .
+
+                # Scan the image with Trivy (use ECR fully qualified tag)
+                trivy image --severity HIGH,CRITICAL --format json -o trivy-report.json ${imageFullTag}
                 """
             }
         }
-
-        stage('Ensure ECR repository exists') {
-            steps {
-                sh """
-                    aws ecr describe-repositories --repository-names ${IMAGE_NAME} --region ${AWS_REGION} \
-                    || aws ecr create-repository --repository-name ${IMAGE_NAME} --region ${AWS_REGION}
-                """
-            }
-        }
-
-        stage('Build and Push Multi-Arch Image') {
-            steps {
-                sh """
-                    # Create and use a buildx builder
-                    docker buildx create --use --name multiarch-builder || docker buildx use multiarch-builder
-
-                    # Build and push for both amd64 (App Runner) and arm64 (local/dev)
-                    docker buildx build \
-                        --platform linux/amd64,linux/arm64 \
-                        -t ${ECR_REPO}:latest \
-                        --push \
-                        .
-                """
-            }
-        }
+    }
+}
 
         // stage('Build, Scan, and Push Docker Image to ECR') {
         //     steps {
