@@ -1,0 +1,6 @@
+venv/
+logs/
+__pycache__/
+medical_chatbot.egg-info/
+.env
+.DS_Store
