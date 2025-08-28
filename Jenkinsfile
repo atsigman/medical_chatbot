@@ -32,7 +32,10 @@ pipeline {
                     | docker login --username AWS --password-stdin ${ecrUrl}
 
                 # Create buildx builder if not exists
-                docker buildx create --use --name multiarch-builder || docker buildx use multiarch-builder
+                docker buildx create --name multiarch-builder --driver docker-container || true
+                docker buildx use multiarch-builder
+                docker buildx inspect --bootstrap
+              
 
                 # Build multi-arch image (amd64 for App Runner, arm64 for local/dev)
                 docker buildx build \
