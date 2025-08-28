@@ -18,27 +18,61 @@ pipeline {
             }
         }
 
-        stage('Build, Scan, and Push Docker Image to ECR') {
+        stage('Authenticate with ECR') {
             steps {
-                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-token']]) {
-                    script {
-                        def accountId = sh(script: "aws sts get-caller-identity --query Account --output text", returnStdout: true).trim()
-                        def ecrUrl = "${accountId}.dkr.ecr.${env.AWS_REGION}.amazonaws.com/${env.ECR_REPO}"
-                        def imageFullTag = "${ecrUrl}:${IMAGE_TAG}"
-
-                        sh """
-                        aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ecrUrl}
-                        docker build -t ${env.ECR_REPO}:${IMAGE_TAG} .
-                        trivy image --severity HIGH,CRITICAL --format json -o trivy-report.json ${env.ECR_REPO}:${IMAGE_TAG} || true
-                        docker tag ${env.ECR_REPO}:${IMAGE_TAG} ${imageFullTag}
-                        docker push ${imageFullTag}
-                        """
-
-                        archiveArtifacts artifacts: 'trivy-report.json', allowEmptyArchive: true
-                    }
-                }
+                sh """
+                    aws ecr get-login-password --region ${AWS_REGION} \
+                    | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+                """
             }
         }
+
+        stage('Ensure ECR repository exists') {
+            steps {
+                sh """
+                    aws ecr describe-repositories --repository-names ${IMAGE_NAME} --region ${AWS_REGION} \
+                    || aws ecr create-repository --repository-name ${IMAGE_NAME} --region ${AWS_REGION}
+                """
+            }
+        }
+
+        stage('Build and Push Multi-Arch Image') {
+            steps {
+                sh """
+                    # Create and use a buildx builder
+                    docker buildx create --use --name multiarch-builder || docker buildx use multiarch-builder
+
+                    # Build and push for both amd64 (App Runner) and arm64 (local/dev)
+                    docker buildx build \
+                        --platform linux/amd64,linux/arm64 \
+                        -t ${ECR_REPO}:latest \
+                        --push \
+                        .
+                """
+            }
+        }
+
+        // stage('Build, Scan, and Push Docker Image to ECR') {
+        //     steps {
+        //         withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-token']]) {
+        //             script {
+        //                 def accountId = sh(script: "aws sts get-caller-identity --query Account --output text", returnStdout: true).trim()
+        //                 def ecrUrl = "${accountId}.dkr.ecr.${env.AWS_REGION}.amazonaws.com/${env.ECR_REPO}"
+        //                 def imageFullTag = "${ecrUrl}:${IMAGE_TAG}"
+
+        //                 sh """
+        //                 aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ecrUrl}
+        //                 docker build -t ${env.ECR_REPO}:${IMAGE_TAG} .
+        //                 trivy image --severity HIGH,CRITICAL --format json -o trivy-report.json ${env.ECR_REPO}:${IMAGE_TAG} || true
+        //                 docker tag ${env.ECR_REPO}:${IMAGE_TAG} ${imageFullTag}
+        //                 docker push ${imageFullTag}
+        //                 """
+
+        //                 archiveArtifacts artifacts: 'trivy-report.json', allowEmptyArchive: true
+        //             }
+        //         }
+        //     }
+        // }
 
         //  stage('Deploy to AWS App Runner') {
         //     steps {
